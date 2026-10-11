@@ -7617,7 +7617,7 @@ var GEM_POMO_BLOCK_MIN = 25;      // har 25 daqiqa haqiqiy fokus = 1 💎
 var GEM_POMO_DAILY_CAP = 4;       // kuniga Pomodoro'dan ko'pi bilan 4 💎
 var GEM_FRIENDS_DAILY_CAP = 3;    // Friends'dan yangi (bonus) olmos — kuniga ko'pi bilan 3 💎
 var GEM_DUEL_WIN_BONUS = 1;       // duelda g'alaba uchun qo'shimcha bonus
-var GEM_PARTY_REWARD_MAX = 3;     // party challenge mukofoti (har a'zoga) maksimal
+var GEM_PARTY_REWARD_MAX = 30;    // party musobaqasi sovrini (liderdan, 💎) maksimal
 var GEM_EXCHANGE_MIN_RATE = 5;    // 1 💎 kamida 5 🪙
 var GEM_LOG_MAX = 200;
 
@@ -7744,6 +7744,21 @@ function gemsSettleFriends() {
   });
   (F.partyChallengesHistory || []).forEach(function (h) {
     if (!h) return;
+    // ⚖️ Yangi: a'zolar o'rtasidagi musobaqa — sovrinni lider boshlashda to'lagan (💎)
+    if (h.kind === 'comp' && h.id) {
+      once('pcomp:' + h.id, function () {
+        var prize = Math.max(0, Number(h.reward) || 0), me = S.cloudUserId, amLeader = h.leaderId === me;
+        var winners = (h.members || []).filter(function (m) { return m && m.winner; });
+        if (h.result === 'cancelled' || h.outcome === 'no_activity' || !winners.length) {
+          if (amLeader && prize) gemsAdd(prize, 'friends', '🎉 ' + _cl('Party musobaqasi: sovrin qaytarildi', 'Party contest: prize refunded', 'Конкурс пати: приз возвращён'));
+          return;
+        }
+        if (winners.some(function (w) { return String(w.id) === String(me); }) && prize) {
+          gemsAdd(Math.floor(prize / winners.length), 'friends', '🏆 ' + _cl('Party musobaqasi g\'alabasi', 'Party contest won', 'Победа в конкурсе пати') + (h.partyName ? ' — ' + h.partyName : ''));
+        }
+      });
+      return;
+    }
     once('party:' + (h.partyName || '') + '|' + (h.title || '') + '|' + (h.finishedAt || ''), function () {
       if (h.result === 'done') gemsMintFriends(Math.min(GEM_PARTY_REWARD_MAX, Math.max(0, Number(h.reward) || 0)), '🎉 ' + _cl('Party challenge bajarildi', 'Party challenge completed', 'Party challenge выполнен'));
     });
@@ -10126,7 +10141,7 @@ function toggleTaskInternal(id) {
     var _onTimeBonus = tbGrantOnTimeBonus(tsk, td0);
     _grantedCoins += _onTimeBonus;
     try { if (typeof window.xOnTaskDone === 'function') window.xOnTaskDone(tsk, true); } catch (e) {}
-    if (typeof friendsRecordTaskEvent === 'function') friendsRecordTaskEvent(1, _grantedCoins);
+    if (typeof friendsRecordTaskEvent === 'function') friendsRecordTaskEvent(1, _grantedCoins, taskXPValue(tsk));
     if(!S.totalTasksDone) S.totalTasksDone=0; S.totalTasksDone++;
     // Haftalik haqiqiy counter (log emas, har bajarilganda +1)
     if(!S.weekDoneLog) S.weekDoneLog={};
@@ -10169,7 +10184,7 @@ function toggleTaskInternal(id) {
     }
     try { if (typeof window.xOnTaskDone === 'function') window.xOnTaskDone(tsk, false); } catch (e) {}
     var _revokedCoins = revokeTaskReward(tsk, today()) + tbRevokeOnTimeBonus(tsk, today());
-    if (typeof friendsRecordTaskEvent === 'function') friendsRecordTaskEvent(-1, -_revokedCoins);
+    if (typeof friendsRecordTaskEvent === 'function') friendsRecordTaskEvent(-1, -_revokedCoins, -taskXPValue(tsk));
     if(S.totalTasksDone>0) S.totalTasksDone--;
     if(S.weekDoneLog && S.weekDoneLog[today()] > 0) S.weekDoneLog[today()]--;
     if(tsk.diff===3 && S.hardTasksDone>0) S.hardTasksDone--;
@@ -28648,10 +28663,12 @@ var partySyncFromCloud = async function() {
         id: p.id, name: p.name, leaderIsMe: p.leaderId === S.cloudUserId,
         note: p.note || '',
         createdAt: p.createdAt ? new Date(p.createdAt).getTime() : Date.now(),
-        challenge: p.challenge ? {
-          title: p.challenge.title, target: p.challenge.target,
-          progress: p.challenge.progress, reward: p.challenge.reward,
-          startedAt: p.challenge.startedAt ? new Date(p.challenge.startedAt).getTime() : Date.now()
+        challenge: null, // eski "birgalikda X" challenge o'rniga a'zolar o'rtasidagi musobaqa (comp)
+        comp: p.comp ? {
+          metric: p.comp.metric, prize: p.comp.prize || 0,
+          startAt: p.comp.startedAt ? new Date(p.comp.startedAt).getTime() : Date.now(),
+          endAt: p.comp.endsAt ? new Date(p.comp.endsAt).getTime() : Date.now(),
+          standings: (p.comp.standings || []).map(function (m) { return { id: m.id, name: m.name, avatarUrl: m.photo || null, score: Number(m.score) || 0, isMe: m.id === S.cloudUserId }; })
         } : null,
         members: (p.members || []).map(function (m) {
           return { id: m.id, name: m.name, avatarUrl: m.photo || null, contribution: m.contribution || 0, isMe: m.id === S.cloudUserId };
@@ -28667,14 +28684,15 @@ var partySyncFromCloud = async function() {
         id: x.id, partyId: x.partyId, partyName: x.partyName,
         fromId: x.fromId, fromName: x.fromName, fromAvatarUrl: x.fromPhoto,
         partyCreatedAt: x.createdAt ? new Date(x.createdAt).getTime() : Date.now(),
-        memberCount: x.memberCount || 1, challenge: x.challenge || null
+        memberCount: x.memberCount || 1, challenge: null, comp: x.comp || null
       };
     });
     F.partyInvitesOutgoing = (d.invites_outgoing || []).map(function (x) {
       return { id: x.id, partyId: x.partyId, partyName: x.partyName, toId: x.toId, toName: x.toName, toAvatarUrl: x.toPhoto };
     });
     F.partyChallengesHistory = (d.history || []).map(function (h) {
-      return { partyName: h.partyName, title: h.title, target: h.target, reward: h.reward, result: h.result, finishedAt: h.finishedAt ? new Date(h.finishedAt).getTime() : Date.now() };
+      return { id: h.id, kind: h.kind || 'coop', partyName: h.partyName, title: h.title, metric: h.metric, target: h.target, reward: h.reward, result: h.result, outcome: h.outcome || null,
+        winnerId: h.winnerId || null, leaderId: h.leaderId || null, members: h.members || [], finishedAt: h.finishedAt ? new Date(h.finishedAt).getTime() : Date.now() };
     });
 
     try { gemsSettleFriends(); } catch (e) { console.warn('[gems settle]', e); }
@@ -28907,27 +28925,36 @@ var friendsCreateParty = async function() {
 };
 
 var friendsStartPartyChallenge = async function() {
+  // ⚖️ A'zolar o'rtasidagi musobaqa: o'lchov (foiz / XP), muddat va 💎 sovrin (liderdan)
   var party = friendsGetMyParty();
   if (!party || !party.leaderIsMe) return;
-  var titleEl = document.getElementById('fpc-title');
-  var targetEl = document.getElementById('fpc-target');
-  var rewardEl = document.getElementById('fpc-reward');
-  var title = (titleEl && titleEl.value || '').trim() || t('friends_default_challenge_title');
-  var target = Math.max(1, parseInt(targetEl && targetEl.value, 10) || 20);
-  var reward = Math.max(0, parseInt(rewardEl && rewardEl.value, 10) || 10);
-  reward = Math.min(GEM_PARTY_REWARD_MAX, reward);
-  var res = await supabase.rpc('start_party_challenge', { p_title: title, p_target: target, p_reward: reward });
-  if (res.error || !(res.data && res.data.ok)) { toast('❌ ' + (res.error ? res.error.message : (res.data && res.data.error))); return; }
+  if ((party.members || []).length < 2) { toast('👥 ' + _cl("Avval kamida bitta do'stingizni partiyaga taklif qiling", 'Invite at least one friend to the party first', 'Сначала пригласите в пати хотя бы одного друга')); return; }
+  var metric = _fpcMetric === 'xp' ? 'xp' : 'percent';
+  var days = _fpcDays || 7;
+  var prizeEl = document.getElementById('fpc-reward');
+  var prize = Math.max(0, Math.min(GEM_PARTY_REWARD_MAX, parseInt(prizeEl && prizeEl.value, 10) || 0));
+  if (prize > gemsAvailable()) { toast(t('friends_not_enough_coins')); return; }
+  var res = await supabase.rpc('start_party_comp', { p_metric: metric, p_days: days, p_prize: prize });
+  if (res.error || !(res.data && res.data.ok)) {
+    var er = res.error ? res.error.message : (res.data && res.data.error);
+    toast('❌ ' + (er === 'need_members' ? _cl("Partiyada kamida 2 kishi bo'lishi kerak", 'The party needs at least 2 members', 'В пати должно быть минимум 2 участника') : er === 'already_running' ? _cl('Musobaqa allaqachon ketmoqda', 'A contest is already running', 'Конкурс уже идёт') : er));
+    return;
+  }
+  if (prize) { gemsAdd(-prize, 'friends', '🎉 ' + _cl('Party musobaqasi sovrini', 'Party contest prize', 'Приз конкурса пати') + ' — ' + party.name); save(); }
   await partySyncFromCloud();
   renderFriendsParty();
-  toast(t('friends_challenge_started_toast'));
+  toast('🏁 ' + _cl('Musobaqa boshlandi!', 'Contest started!', 'Конкурс начался!'));
 };
+var _fpcMetric = 'percent', _fpcDays = 7;
+function fpcSetMetric(m, el) { _fpcMetric = m; document.querySelectorAll('[data-fpc-metric]').forEach(function (b) { b.classList.toggle('sel', b === el); }); }
+function fpcSetDays(n, el) { _fpcDays = n; document.querySelectorAll('[data-fpc-days]').forEach(function (b) { b.classList.toggle('sel', b === el); }); }
 
 var friendsCancelPartyChallenge = async function() {
   var party = friendsGetMyParty();
   if (!party) return;
-  var res = await supabase.rpc('cancel_party_challenge');
-  if (res.error) { toast('❌ ' + res.error.message); return; }
+  if (!confirm(_cl('Musobaqani bekor qilasizmi? Sovrin sizga qaytadi.', 'Cancel the contest? The prize will be refunded to you.', 'Отменить конкурс? Приз вернётся вам.'))) return;
+  var res = await supabase.rpc('cancel_party_comp');
+  if (res.error || !(res.data && res.data.ok)) { toast('❌ ' + (res.error ? res.error.message : (res.data && res.data.error))); return; }
   await partySyncFromCloud();
   renderFriendsParty();
 };
@@ -28977,7 +29004,7 @@ var worldPartyCreate = async function() {
   var maxMembers = Math.min(cap, Math.max(2, parseInt((document.getElementById('wp-max-input') || {}).value, 10) || cap));
   var prize = Math.max(1, parseInt((document.getElementById('wp-prize-input') || {}).value, 10) || 10);
   if (prize > gemsAvailable()) { toast(t('friends_not_enough_coins')); return; }
-  var target = _wpGoalType === 'race_tasks' ? Math.max(1, parseInt((document.getElementById('wp-target-input') || {}).value, 10) || 30) : null;
+  var target = null; // ⚖️ faqat 'percent' yoki 'xp' — maqsad soni kerak emas
 
   var res = await supabase.rpc('create_world_party', {
     p_name: name, p_goal_type: _wpGoalType, p_target: target,
@@ -29557,15 +29584,22 @@ function renderFriendsParty() {
     else {
       noneBox.style.display = 'none'; activeBox.style.display = '';
 
-      var membersHtml = party.members.map(function (m) {
+      // ⚖️ Musobaqa ketayotgan bo'lsa — a'zolar ball bo'yicha tartiblanadi
+      var comp = party.comp;
+      var scoreOf = {}; (comp && comp.standings || []).forEach(function (x) { scoreOf[x.id] = x.score; });
+      var orderedMembers = comp ? party.members.slice().sort(function (a, b) { return (scoreOf[b.id] || 0) - (scoreOf[a.id] || 0); }) : party.members;
+      var topScore = comp ? Math.max.apply(null, orderedMembers.map(function (m) { return scoreOf[m.id] || 0; }).concat([0])) : 0;
+      var membersHtml = orderedMembers.map(function (m, idx) {
         var kickBtn = (party.leaderIsMe && !m.isMe) ? '<button class="friend-req-btn decline" onclick="friendsKickMember(\'' + m.id + '\')" aria-label="' + esc(t('friends_kick_btn')) + ' — ' + esc(m.name) + '" data-i18n="friends_kick_btn">' + t('friends_kick_btn') + '</button>' : '';
         var actionsHtml = kickBtn ? '<div class="friend-card-actions">' + kickBtn + '</div>' : '';
-        var contribPct = (party.challenge && party.challenge.target) ? Math.min(100, Math.round(100 * (m.contribution || 0) / party.challenge.target)) : null;
-        var contribSub = t('friends_contribution_label') + ': ' + (m.contribution || 0) + (contribPct != null ? ' (' + contribPct + '%)' : '');
+        var sc = scoreOf[m.id] || 0;
+        var bar = comp ? (comp.metric === 'xp' ? (topScore > 0 ? Math.round(sc / topScore * 100) : 0) : Math.min(100, Math.round(sc))) : null;
+        var medal = comp ? (['🥇', '🥈', '🥉'][idx] || ('#' + (idx + 1))) + ' ' : '';
+        var sub = comp ? compScoreLabel(sc, comp.metric) : (party.leaderIsMe && m.isMe ? '👑 ' + _cl('Lider', 'Leader', 'Лидер') : _cl("A'zo", 'Member', 'Участник'));
         return '<div class="friend-card">'
-          + '<div class="friend-card-info">' + friendsAvatarHtml(m) + '<div style="min-width:0;flex:1"><div class="friend-name">' + esc(m.name) + (party.leaderIsMe && m.isMe ? ' 👑' : '') + '</div>'
-          + '<div class="friend-sub">' + contribSub + '</div>'
-          + (contribPct != null ? '<div class="party-progress-track" style="height:4px;margin-top:4px"><div class="party-progress-fill" style="width:' + contribPct + '%"></div></div>' : '')
+          + '<div class="friend-card-info">' + friendsAvatarHtml(m) + '<div style="min-width:0;flex:1"><div class="friend-name">' + medal + esc(m.name) + (m.isMe ? ' <span style="color:var(--accent);font-size:var(--fs-3xs)">(' + _cl('siz', 'you', 'вы') + ')</span>' : '') + '</div>'
+          + '<div class="friend-sub">' + sub + '</div>'
+          + (bar != null ? '<div class="party-progress-track" style="height:4px;margin-top:4px"><div class="party-progress-fill" style="width:' + bar + '%"></div></div>' : '')
           + '</div></div>'
           + actionsHtml
           + '</div>';
@@ -29585,25 +29619,32 @@ function renderFriendsParty() {
       }
 
       var challengeHtml;
-      if (party.challenge) {
-        var pct = Math.min(100, Math.round(100 * party.challenge.progress / party.challenge.target));
-        challengeHtml = '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;margin-top:14px">'
-          + '<div style="font-size:var(--fs-sm);font-weight:700;color:var(--text);margin-bottom:8px">🎯 ' + esc(party.challenge.title) + '</div>'
-          + '<div class="party-progress-track"><div class="party-progress-fill" style="width:' + pct + '%"></div></div>'
-          + '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:var(--fs-2xs);color:var(--text-muted)"><span>' + party.challenge.progress + ' / ' + party.challenge.target + '</span><span style="color:var(--gold)">+' + party.challenge.reward + ' 💎 ' + t('friends_each_member') + '</span></div>'
-          + (party.leaderIsMe ? '<button class="friend-req-btn decline" style="margin-top:10px;width:100%" onclick="friendsCancelPartyChallenge()" data-i18n="friends_cancel_challenge_btn">' + t('friends_cancel_challenge_btn') + '</button>' : '')
+      var _box = 'background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;margin-top:14px';
+      if (party.comp) {
+        var c2 = party.comp, left = Math.max(0, c2.endAt - Date.now());
+        var leftTxt = left > 86400000 ? Math.ceil(left / 86400000) + ' ' + _cl('kun', 'd', 'дн.') : Math.max(1, Math.ceil(left / 3600000)) + ' ' + _cl('soat', 'h', 'ч');
+        challengeHtml = '<div style="' + _box + '">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px"><div style="font-size:var(--fs-sm);font-weight:700;color:var(--text)">🏁 ' + _cl('Musobaqa', 'Contest', 'Конкурс') + ': ' + (c2.metric === 'xp' ? '⭐ XP' : '📈 ' + _cl('Bajarish foizi', 'Completion %', 'Процент выполнения')) + '</div>'
+          + '<div style="font-size:var(--fs-2xs);color:var(--text-muted);white-space:nowrap">⏳ ' + leftTxt + '</div></div>'
+          + '<div style="font-size:var(--fs-2xs);color:var(--text-dim);line-height:1.5">' + esc(compMetricHint(c2.metric)) + '</div>'
+          + (c2.prize ? '<div style="margin-top:6px;font-size:var(--fs-xs);color:var(--gold);font-weight:700">🏆 ' + _cl("G'olibga", 'Winner gets', 'Победителю') + ': ' + c2.prize + ' 💎</div>' : '')
+          + (party.leaderIsMe ? '<button class="friend-req-btn decline" style="margin-top:10px;width:100%" onclick="friendsCancelPartyChallenge()">' + _cl('Musobaqani bekor qilish', 'Cancel contest', 'Отменить конкурс') + '</button>' : '')
           + '</div>';
       } else if (party.leaderIsMe) {
-        challengeHtml = '<div style="margin-top:14px">'
-          + '<div class="modal-field"><label data-i18n="friends_party_challenge_title_label">' + t('friends_party_challenge_title_label') + '</label><input type="text" id="fpc-title" placeholder="' + t('friends_party_challenge_title_ph') + '" data-i18n-ph="friends_party_challenge_title_ph" /></div>'
-          + '<div style="display:flex;gap:8px">'
-          + '<div class="modal-field" style="flex:1"><label data-i18n="friends_target_label">' + t('friends_target_label') + '</label><input type="number" id="fpc-target" min="1" value="20" /></div>'
-          + '<div class="modal-field" style="flex:1"><label data-i18n="friends_reward_label">' + t('friends_reward_label') + '</label><input type="number" id="fpc-reward" min="1" max="3" value="2" /></div>'
-          + '</div>'
-          + '<button class="btn-save" style="width:100%" onclick="friendsStartPartyChallenge()" data-i18n="friends_start_challenge_btn">' + t('friends_start_challenge_btn') + '</button>'
+        var chip = function (attr, val, label, on, fn) { return '<button type="button" class="diff-opt' + (on ? ' sel' : '') + '" ' + attr + '="' + val + '" onclick="' + fn + '(' + (typeof val === 'number' ? val : "\'" + val + "\'") + ', this)">' + label + '</button>'; };
+        challengeHtml = '<div style="' + _box + '">'
+          + '<div style="font-size:var(--fs-sm);font-weight:700;color:var(--text);margin-bottom:4px">🏁 ' + _cl("A'zolar o'rtasida musobaqa", 'Contest between members', 'Конкурс между участниками') + '</div>'
+          + '<div style="font-size:var(--fs-2xs);color:var(--text-dim);line-height:1.5;margin-bottom:10px">' + _cl("Muddat oxirida kim yuqori natija ko'rsatsa, sovrinni o'sha oladi.", 'Whoever has the best result at the end wins the prize.', 'Кто покажет лучший результат к концу — получит приз.') + '</div>'
+          + '<div class="modal-field"><label>' + _cl("O'lchov", 'Metric', 'Метрика') + '</label><div class="diff-opts">'
+          + chip('data-fpc-metric', 'percent', '📈 ' + _cl('Bajarish %', 'Completion %', 'Выполнение %'), _fpcMetric !== 'xp', 'fpcSetMetric')
+          + chip('data-fpc-metric', 'xp', '⭐ XP', _fpcMetric === 'xp', 'fpcSetMetric') + '</div></div>'
+          + '<div class="modal-field"><label>' + _cl('Muddat', 'Duration', 'Срок') + '</label><div class="diff-opts">'
+          + [3, 7, 14].map(function (n) { return chip('data-fpc-days', n, n + ' ' + _cl('kun', 'days', 'дн.'), _fpcDays === n, 'fpcSetDays'); }).join('') + '</div></div>'
+          + '<div class="modal-field"><label>' + _cl("Sovrin (💎, sizdan)", 'Prize (💎, from you)', 'Приз (💎, от вас)') + '</label><input type="number" id="fpc-reward" min="0" max="' + GEM_PARTY_REWARD_MAX + '" value="5" /></div>'
+          + '<button class="btn-save" style="width:100%" onclick="friendsStartPartyChallenge()">🏁 ' + _cl('Musobaqani boshlash', 'Start contest', 'Начать конкурс') + '</button>'
           + '</div>';
       } else {
-        challengeHtml = '<div style="text-align:center;padding:14px;color:var(--text-dim);font-size:var(--fs-xs)" data-i18n="friends_waiting_leader">' + t('friends_waiting_leader') + '</div>';
+        challengeHtml = '<div style="text-align:center;padding:14px;color:var(--text-dim);font-size:var(--fs-xs)">' + _cl('Lider musobaqa boshlashini kuting', 'Wait for the leader to start a contest', 'Ждите, пока лидер начнёт конкурс') + '</div>';
       }
 
       // 🆕 Lider tomonidan yuborilgan, hali javob kutayotgan takliflar
@@ -29667,9 +29708,9 @@ function openPartyInviteDetailsModal(id) {
   rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_from_label')) + '</span><span class="pid-value">' + (inv.fromIcon || '🙂') + ' ' + esc(inv.fromName) + '</span></div>';
   rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_created_label')) + '</span><span class="pid-value">' + _formatTimestamp(inv.partyCreatedAt) + '</span></div>';
   rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_members_label')) + '</span><span class="pid-value">👥 ' + (inv.memberCount != null ? inv.memberCount : 1) + '</span></div>';
-  if (inv.challenge) {
-    rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_goal_label')) + '</span><span class="pid-value">' + esc(inv.challenge.title || t('friends_default_challenge_title')) + (inv.challenge.target ? (' — ' + inv.challenge.target + '%') : '') + '</span></div>';
-    rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_reward_label')) + '</span><span class="pid-value">💎 ' + inv.challenge.reward + '</span></div>';
+  if (inv.comp) {
+    rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_goal_label')) + '</span><span class="pid-value">🏁 ' + (inv.comp.metric === 'xp' ? '⭐ XP' : '📈 ' + _cl('Bajarish foizi', 'Completion %', 'Процент выполнения')) + '</span></div>';
+    rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_reward_label')) + '</span><span class="pid-value">💎 ' + (inv.comp.prize || 0) + '</span></div>';
   } else {
     rows += '<div class="pid-row"><span class="pid-label">' + esc(t('party_invite_goal_label')) + '</span><span class="pid-value" style="color:var(--text-dim)">' + esc(t('party_invite_no_challenge')) + '</span></div>';
   }
@@ -29771,19 +29812,19 @@ function openPartyStatsModal() {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:216;display:flex;align-items:center;justify-content:center;padding:20px';
   var box = document.createElement('div');
   box.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);padding:20px;width:100%;max-width:400px;max-height:75vh;overflow-y:auto;position:relative';
-  var hasTarget = !!(party.challenge && party.challenge.target);
-  var ranked = (party.members || []).slice().sort(function (a, b) { return (b.contribution || 0) - (a.contribution || 0); });
+  var comp = party.comp, sc = {};
+  (comp && comp.standings || []).forEach(function (x) { sc[x.id] = x.score; });
+  var ranked = (party.members || []).slice().sort(function (a, b) { return (sc[b.id] || 0) - (sc[a.id] || 0); });
   var rows = ranked.map(function (m, i) {
-    var pct = hasTarget ? Math.min(100, Math.round(100 * (m.contribution || 0) / party.challenge.target)) : null;
     return '<tr>'
       + '<td style="padding:6px 4px;border-bottom:1px solid var(--border);color:var(--text-muted)">#' + (i + 1) + '</td>'
       + '<td style="padding:6px 4px;border-bottom:1px solid var(--border)">' + (m.icon || '🙂') + ' ' + esc(m.name) + (m.isMe ? ' (' + t('friends_you_label') + ')' : '') + (party.leaderIsMe && m.isMe ? ' 👑' : '') + '</td>'
-      + '<td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:right">' + (m.contribution || 0) + (pct != null ? ' (' + pct + '%)' : '') + '</td>'
+      + '<td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:right">' + (comp ? compScoreLabel(sc[m.id] || 0, comp.metric) : '—') + '</td>'
       + '</tr>';
   }).join('');
-  var summary = party.challenge
-    ? ('🎯 ' + esc(party.challenge.title) + ' · ' + party.challenge.progress + ' / ' + party.challenge.target)
-    : t('friends_waiting_leader');
+  var summary = comp
+    ? ('🏁 ' + (comp.metric === 'xp' ? '⭐ XP' : '📈 ' + _cl('Bajarish foizi', 'Completion %', 'Процент выполнения')) + (comp.prize ? ' · 🏆 ' + comp.prize + ' 💎' : ''))
+    : _cl('Lider musobaqa boshlashini kuting', 'Wait for the leader to start a contest', 'Ждите, пока лидер начнёт конкурс');
   box.innerHTML = '<button onclick="document.getElementById(\'party-stats-modal\').remove()" style="position:absolute;top:12px;right:12px;width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:var(--surface2);color:var(--text-muted);cursor:pointer">✕</button>'
     + '<div style="font-family:Syne,sans-serif;font-weight:700;font-size:var(--fs-md);color:var(--text);margin-bottom:6px" data-i18n="friends_team_stats_title">' + t('friends_team_stats_title') + '</div>'
     + '<div style="font-size:var(--fs-2xs);color:var(--text-dim);margin-bottom:14px">' + summary + '</div>'
@@ -29886,13 +29927,16 @@ function wpToggleFilters() {
   box.style.display = show ? 'flex' : 'none';
 }
 function wpSetGoalType(g) {
+  if (g !== 'xp') g = 'percent';
   _wpGoalType = g;
-  ['percent', 'race_tasks'].forEach(function (k) {
+  ['percent', 'xp'].forEach(function (k) {
     var btn = document.getElementById('wp-goal-' + k);
     if (btn) btn.classList.toggle('sel', k === g);
   });
   var targetField = document.getElementById('wp-target-field');
-  if (targetField) targetField.style.display = g === 'race_tasks' ? '' : 'none';
+  if (targetField) targetField.style.display = 'none';
+  var hint = document.getElementById('wp-goal-hint');
+  if (hint) hint.textContent = compMetricHint(g);
 }
 function wpSetDuration(days) {
   _wpDuration = days;
@@ -29930,6 +29974,7 @@ function closeCreateWorldPartyModal() {
 /* worldPartyCreate: blok boshiga (global var sifatida) ko'chirildi */
 
 function worldPartyGoalDesc(p) {
+  if (p.goalType === 'xp') return '⭐ ' + friendsDurationLabel(p.durationDays) + ' · ' + _cl("kim ko'p XP yig'sa", 'most XP wins', 'больше всех XP');
   if (p.goalType === 'race_tasks' || p.goalType === 'race_coins') return '🏁 ' + t('wp_goal_race_desc').replace('{target}', p.target);
   return '📊 ' + friendsDurationLabel(p.durationDays) + ' ' + t('wp_goal_percent_desc');
 }
@@ -29945,6 +29990,7 @@ function worldMemberScore(member) {
   return { percent: percent, coins: (member.totalCoinsEarned != null ? member.totalCoinsEarned : totalCoins), totalDone: totalDone, totalDue: totalDue };
 }
 function worldPartyMemberValue(party, member) {
+  if (party.goalType === 'xp' || party.goalType === 'percent') return compScore(member.dailyLog, party.goalType, party.startAt, party.endAt);
   var s = worldMemberScore(member);
   if (party.goalType === 'race_tasks') return s.totalDone;
   return party.goalType === 'race_coins' ? s.coins : s.percent; // race_coins — eski (tanga davri) partiyalar
@@ -30153,7 +30199,7 @@ function worldPartyShowStats(id) {
   var p = findWorldPartyById(id);
   if (!p) return;
   var ranked = (p.members || []).map(function (m) { return { m: m, val: worldPartyMemberValue(p, m) }; }).sort(function (a, b) { return b.val - a.val; });
-  var unit = p.goalType === 'race_tasks' ? ' ' + t('friends_unit_tasks') : (p.goalType === 'race_coins' ? ' 🪙' : '%');
+  var unit = p.goalType === 'xp' ? ' XP' : p.goalType === 'race_tasks' ? ' ' + t('friends_unit_tasks') : (p.goalType === 'race_coins' ? ' 🪙' : '%');
   var rows = ranked.map(function (r, i) {
     return '<tr>'
       + '<td style="padding:6px 4px;border-bottom:1px solid var(--border);color:var(--text-muted)">#' + (i + 1) + '</td>'
@@ -30252,14 +30298,20 @@ function closeNewChallengeModal() {
   document.getElementById('friends-newchallenge-overlay').classList.remove('open');
 }
 function fncSetCriteria(criteria) {
+  // ⚖️ Faqat adolatli o'lchovlar: bajarish foizi yoki yig'ilgan XP
+  if (criteria !== 'xp') criteria = 'percent';
   _fncCriteria = criteria;
-  if (criteria === 'coins') criteria = _fncCriteria = 'percent'; // tanga mezoni olib tashlangan
-  ['percent', 'combo', 'tasks'].forEach(function (k) {
+  ['percent', 'xp'].forEach(function (k) {
     var btn = document.getElementById('fnc-crit-' + k);
     if (btn) btn.classList.toggle('sel', k === criteria);
   });
   var hintEl = document.getElementById('fnc-crit-hint');
-  if (hintEl) hintEl.textContent = t(FRIENDS_CRITERIA_HINTS[criteria] || '');
+  if (hintEl) hintEl.textContent = compMetricHint(criteria);
+}
+function compMetricHint(m) {
+  return m === 'xp'
+    ? _cl("Musobaqa davomida kim ko'proq XP yig'sa, o'sha yutadi. Qiyin vazifalar ko'proq XP beradi.", 'Whoever earns more XP during the contest wins. Harder tasks give more XP.', 'Побеждает тот, кто наберёт больше XP за время конкурса. Сложные задачи дают больше XP.')
+    : _cl("Har kuni rejadagi vazifalarning necha foizi bajarilgani o'rtachasi. Ilovaga kirilmagan kun 0% hisoblanadi — kim har kuni intizomli bo'lsa, o'sha yutadi.", 'The average share of planned tasks done each day. A day without opening the app counts as 0% — the most consistent player wins.', 'Средний процент выполненных запланированных задач за день. День без входа = 0% — побеждает самый дисциплинированный.');
 }
 function fncSetDuration(days) {
   _fncDuration = days;
@@ -30274,6 +30326,7 @@ function dateStrFromTs(ts) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 function friendsCriteriaLabel(criteria) {
+  if (criteria === 'xp') return '⭐ XP';
   if (criteria === 'coins') return t('friends_type_coins');
   if (criteria === 'combo') return t('friends_type_combo');
   if (criteria === 'tasks') return t('friends_type_tasks');
@@ -30316,63 +30369,55 @@ function renderFriendsChallengeIncoming() {
 /* friendsAcceptChallengeIncoming: blok boshiga (global var sifatida) ko'chirildi */
 /* friendsDeclineChallengeIncoming: blok boshiga (global var sifatida) ko'chirildi */
 
-function friendsRecordTaskEvent(taskDelta, coinsDelta) {
+function friendsRecordTaskEvent(taskDelta, coinsDelta, xpDelta) {
   if (!S.friends) return;
+  xpDelta = Number(xpDelta) || 0;
   friendsUpdateDueSnapshot();
-  var myParty = friendsGetMyParty();
-  if (myParty) {
-    // Darhol (optimistik) mahalliy yangilanish — foydalanuvchi kutmasin,
-    // haqiqiy holat esa partySyncFromCloud/realtime orqali tez orada tasdiqlanadi.
-    var meMember = (myParty.members || []).find(function (m) { return m.isMe; });
-    if (meMember) meMember.contribution = Math.max(0, (meMember.contribution || 0) + taskDelta);
-    if (myParty.challenge) {
-      if (taskDelta > 0) myParty.challenge.progress = Math.min(myParty.challenge.target, myParty.challenge.progress + taskDelta);
-      else if (taskDelta < 0) myParty.challenge.progress = Math.max(0, myParty.challenge.progress + taskDelta);
-    }
-    // Haqiqiy (bulutdagi) hissa/progressni yangilaymiz — bu boshqa a'zolarga
-    // ham ko'rinishi va mukofot to'g'ri hisoblanishi uchun MUHIM.
-    if (S.cloudLinked && S.cloudUserId) {
-      (async function () {
-        var res = await supabase.rpc('party_contribute', { delta: taskDelta });
-        if (!res.error && res.data && res.data.finished) {
-          toast('🎉 ' + t('friends_party_challenge_done_toast'));
-          try { confetti(); } catch (e) {}
-        }
-        await partySyncFromCloud();
-        try { renderFriendsParty(); } catch (e) {}
-      })();
-    }
-  }
   var d = today();
-  var list = S.friends.challenges || [];
-  // Darhol (optimistik) mahalliy yangilanish — haqiqiy holat duelsReportTaskEvent
-  // orqali bulutga yoziladi va duelsSyncFromCloud bilan tez orada tasdiqlanadi.
-  list.forEach(function (c) {
+  // Darhol (optimistik) mahalliy yangilanish — haqiqiy holat comp_record_event orqali bulutga yoziladi
+  var bump = function (log) {
+    if (!log[d]) log[d] = { due: _todayDueCount(), done: 0, xp: 0, coins: 0 };
+    log[d].done = Math.max(0, (log[d].done || 0) + taskDelta);
+    log[d].xp = Math.max(0, (log[d].xp || 0) + xpDelta);
+    log[d].coins = (log[d].coins || 0) + coinsDelta;
+  };
+  (S.friends.challenges || []).forEach(function (c) {
     if (c.status !== 'active') return;
     if (!c.me) c.me = { dailyLog: {}, totalCoinsEarned: 0 };
-    if (!c.me.dailyLog[d]) c.me.dailyLog[d] = { due: 0, done: 0, coins: 0 };
-    c.me.dailyLog[d].done = Math.max(0, c.me.dailyLog[d].done + taskDelta);
-    c.me.dailyLog[d].coins += coinsDelta;
-    c.me.totalCoinsEarned = Math.max(0, (c.me.totalCoinsEarned || 0) + coinsDelta);
+    bump(c.me.dailyLog);
   });
-  if (list.some(function (c) { return c.status === 'active'; })) {
-    duelsReportTaskEvent(taskDelta, coinsDelta);
-  }
-  if (S.friends.myWorldPartyId) {
-    worldPartyReportTaskEvent(taskDelta, coinsDelta);
-  }
-  var wp = S.friends.worldParties || [];
-  wp.forEach(function (p) {
+  (S.friends.worldParties || []).forEach(function (p) {
     if (p.status !== 'active') return;
     var me = (p.members || []).find(function (m) { return m.isMe; });
     if (!me) return;
     if (!me.dailyLog) me.dailyLog = {};
-    if (!me.dailyLog[d]) me.dailyLog[d] = { due: 0, done: 0, coins: 0 };
-    me.dailyLog[d].done = Math.max(0, me.dailyLog[d].done + taskDelta);
-    me.dailyLog[d].coins += coinsDelta;
-    me.totalCoinsEarned = Math.max(0, (me.totalCoinsEarned || 0) + coinsDelta);
+    bump(me.dailyLog);
   });
+  compReportEvent(taskDelta, xpDelta);
 }
+// ⚖️ Bitta hodisa barcha faol musobaqalarga (duel, party, world party) yoziladi
+var _compAnyActive = function () {
+  var F = S.friends || {};
+  var party = (typeof friendsGetMyParty === 'function') ? friendsGetMyParty() : null;
+  return (F.challenges || []).some(function (c) { return c.status === 'active'; }) || !!F.myWorldPartyId || !!(party && party.comp);
+};
+var compReportEvent = async function (deltaDone, deltaXp) {
+  if (!S.cloudLinked || !S.cloudUserId || !_compAnyActive()) return;
+  try {
+    var res = await supabase.rpc('comp_record_event', { p_delta_done: deltaDone || 0, p_delta_xp: deltaXp || 0, p_due_today: _todayDueCount(), p_day: today() });
+    if (res.error) { console.warn('[Comp] xatolik:', res.error.message); return; }
+    S._compPingDate = today();
+    try { await duelsSyncFromCloud(); } catch (e) {}
+    try { await partySyncFromCloud(); } catch (e) {}
+    try { await worldPartySyncFromCloud(); } catch (e) {}
+    try { renderFriendsAll(); } catch (e) {}
+  } catch (e) { console.warn('[Comp] xatolik:', e.message); }
+};
+// Kun boshida "bugun nechta vazifa bor"ni yozib qo'yamiz — foiz hisobi to'g'ri bo'lishi uchun
+var compDailyPing = function () {
+  if (S._compPingDate === today()) return;
+  compReportEvent(0, 0);
+};
 function friendsUpdateDueSnapshot() {
   if (!S.friends) return;
   var challenges = S.friends.challenges || [];
@@ -30428,10 +30473,32 @@ function friendsComputeScore(c, side) {
   var percent = totalDue > 0 ? Math.round(100 * totalDone / totalDue) : 0;
   return { percent: percent, coins: totalCoins, totalDone: totalDone, totalDue: totalDue };
 }
+// ⚖️ Serverdagi _comp_score bilan bir xil: percent — kunlik foizlar o'rtachasi (yozuvsiz kun = 0%,
+// "due"=0 kun hisobga olinmaydi); xp — yig'indi
+function compScore(log, metric, startTs, endTs) {
+  log = log || {};
+  if (metric === 'xp') return Object.keys(log).reduce(function (a, k) { return a + Math.max(0, Number(log[k] && log[k].xp) || 0); }, 0);
+  var d = new Date(startTs || Date.now()), end = new Date(Math.min(Date.now(), endTs || Date.now()));
+  var ds = function (x) { return x.toISOString().slice(0, 10); };
+  var sum = 0, n = 0, guard = 0, endS = ds(end);
+  for (var cur = ds(d); cur <= endS && guard < 400; guard++) {
+    var e = log[cur];
+    if (!e) n++;
+    else if ((e.due || 0) > 0) { sum += Math.min(100, (e.done || 0) * 100 / e.due); n++; }
+    d.setUTCDate(d.getUTCDate() + 1); cur = ds(d);
+  }
+  return n ? Math.round(sum / n * 10) / 10 : 0;
+}
+function compScoreLabel(v, metric) { return metric === 'xp' ? Math.round(v) + ' XP' : (Math.round(v * 10) / 10) + '%'; }
 function friendsCompareChallenge(c) {
   var meS = friendsComputeScore(c, 'me');
   var oppS = friendsComputeScore(c, 'opp');
   var meVal, oppVal;
+  if (c.criteria === 'xp' || c.criteria === 'percent') {
+    meVal = compScore(c.me && c.me.dailyLog, c.criteria, c.startAt, c.endAt);
+    oppVal = compScore(c.opp && c.opp.dailyLog, c.criteria, c.startAt, c.endAt);
+    return { meS: meS, oppS: oppS, meVal: meVal, oppVal: oppVal };
+  }
   if (c.criteria === 'coins') {
     meVal = meS.coins; oppVal = oppS.coins;
   } else if (c.criteria === 'percent') {
@@ -30556,7 +30623,7 @@ function renderFriendsChallenges() {
 
   var mainHtml = main.map(function (c) {
     var cmp = friendsCompareChallenge(c);
-    var unit = c.criteria === 'coins' ? ' 🪙' : (c.criteria === 'tasks' ? ' ' + t('friends_unit_tasks') : '%');
+    var unit = c.criteria === 'xp' ? ' XP' : c.criteria === 'coins' ? ' 🪙' : (c.criteria === 'tasks' ? ' ' + t('friends_unit_tasks') : '%');
     var sub = friendsCriteriaLabel(c.criteria) + ' · 💎 ' + c.stake + ' · ' + friendsDurationLabel(c.durationDays);
     var statusChip = c.status === 'finished'
       ? '<span style="font-size:var(--fs-2xs);font-weight:700;color:' + (c.winner === 'me' ? 'var(--green)' : c.winner === 'draw' ? 'var(--text-muted)' : 'var(--red)') + '">' + (c.winner === 'me' ? t('friends_you_won') : c.winner === 'draw' ? t('friends_draw_label') : t('friends_you_lost')) + '</span>'
@@ -30601,7 +30668,7 @@ function friendsShowChallengeStats(id) {
       + '</tr>';
   }
   var cmp = friendsCompareChallenge(c);
-  var unit = c.criteria === 'coins' ? ' 🪙' : (c.criteria === 'tasks' ? ' ' + t('friends_unit_tasks') : '%');
+  var unit = c.criteria === 'xp' ? ' XP' : c.criteria === 'coins' ? ' 🪙' : (c.criteria === 'tasks' ? ' ' + t('friends_unit_tasks') : '%');
   var titleEl = document.getElementById('friends-challenge-stats-title');
   if (titleEl) titleEl.textContent = '⚔️ ' + t('friends_you_label') + ' vs ' + c.opponentName;
   var oppColEl = document.getElementById('friends-challenge-stats-opp-col');
@@ -31056,9 +31123,23 @@ window.addEventListener('load', _checkAdminHash);
 // ---------- Blok 8/10 ----------
 try {
 
+// 🔁 401 (sessiya tokeni eskirgan) bo'lsa — tokenni yangilab, so'rovni bir marta qayta yuboramiz
+var _sbFetch = async function (url, opts) {
+  var r = await fetch(url, opts);
+  if (r.status !== 401 || !/\/rest\/v1\//.test(String(url)) || (opts && opts._sbRetried)) return r;
+  try {
+    var ref = await supabase.auth.refreshSession();
+    var tok = ref && ref.data && ref.data.session && ref.data.session.access_token;
+    if (!tok) return r;
+    var h = new Headers((opts && opts.headers) || {});
+    h.set('Authorization', 'Bearer ' + tok);
+    return await fetch(url, Object.assign({}, opts, { headers: h, _sbRetried: true }));
+  } catch (e) { return r; }
+};
 var supabase = window.supabase.createClient(
   'https://zzcvpenkevxlurgpjltz.supabase.co',
-  'sb_publishable_KbjJQoICYY8BoIqeBw_OKQ_xTTk_yu8'
+  'sb_publishable_KbjJQoICYY8BoIqeBw_OKQ_xTTk_yu8',
+  { global: { fetch: function (u, o) { return _sbFetch(u, o); } } }
 );
 // Sessiya tekshiruvi cloud_extras modulining oxirida chaqiriladi.
 

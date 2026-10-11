@@ -2856,9 +2856,8 @@
       <label data-i18n="friends_challenge_type_label">Chorlov mezoni</label>
       <div class="diff-opts" style="margin-bottom:8px">
         <button type="button" class="diff-opt sel" id="fnc-crit-percent" onclick="fncSetCriteria('percent')"><span data-i18n="friends_type_percent">📊 % Vazifa</span></button>
-        <button type="button" class="diff-opt" id="fnc-crit-combo" onclick="fncSetCriteria('combo')"><span data-i18n="friends_type_combo">🔥 Aralash</span></button>
-        <!-- 🆕 QO'SHILDI: yangi chorlov mezoni — jami bajarilgan vazifalar soni (foizsiz, xom son) -->
-        <button type="button" class="diff-opt" id="fnc-crit-tasks" onclick="fncSetCriteria('tasks')"><span data-i18n="friends_type_tasks">🎯 Vazifa soni</span></button>
+        <!-- ⚖️ Adolatli o'lchovlar: bajarish foizi yoki yig'ilgan XP -->
+        <button type="button" class="diff-opt" id="fnc-crit-xp" onclick="fncSetCriteria('xp')"><span>⭐ XP</span></button>
       </div>
       <div style="font-size:var(--fs-2xs);color:var(--text-dim);line-height:1.5" id="fnc-crit-hint"></div>
     </div>
@@ -2944,9 +2943,10 @@
     <div class="modal-field">
       <label data-i18n="wp_goal_label">Maqsad turi</label>
       <div class="diff-opts" style="margin-bottom:8px">
-        <button type="button" class="diff-opt sel" id="wp-goal-percent" onclick="wpSetGoalType('percent')"><span data-i18n="wp_goal_percent_btn">📊 Eng yaxshi %</span></button>
-        <button type="button" class="diff-opt" id="wp-goal-race_tasks" onclick="wpSetGoalType('race_tasks')"><span data-i18n="wp_goal_race_btn">🏁 Birinchi tangaga</span></button>
+        <button type="button" class="diff-opt sel" id="wp-goal-percent" onclick="wpSetGoalType('percent')"><span>📈 Bajarish %</span></button>
+        <button type="button" class="diff-opt" id="wp-goal-xp" onclick="wpSetGoalType('xp')"><span>⭐ XP</span></button>
       </div>
+      <div id="wp-goal-hint" style="font-size:var(--fs-2xs);color:var(--text-dim);line-height:1.5;margin-top:6px"></div>
     </div>
     <div class="modal-field" id="wp-target-field" style="display:none">
       <label data-i18n="wp_target_label">Nechta tangaga birinchi yetish</label>

@@ -1771,6 +1771,7 @@
     var beat = function () {
       if (document.visibilityState !== 'visible' || !cloudOk()) return;
       try { supabase.rpc('touch_activity', { p_device: (typeof _cloudDeviceType === 'function' ? _cloudDeviceType() : null) }).then(function () {}, function () {}); } catch (e) {}
+      try { if (typeof compDailyPing === 'function') compDailyPing(); } catch (e) {}
     };
     setTimeout(beat, 5000); setInterval(beat, 120000);
     setTimeout(refSync, 6000);

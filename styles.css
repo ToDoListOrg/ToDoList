@@ -532,6 +532,10 @@
   }
 
   #pomo-manage-panel { position:relative; background:#1C1C25; padding:22px 18px calc(28px + env(safe-area-inset-bottom)); }
+  /* "Yopish" tugmasi — ✕ bilan bir xil vazifa; ro'yxat ostida keng
+     chiziq bo'lib turmasligi uchun ixcham, markazlashgan tugma. */
+  #pomo-manage-panel > .modal-actions { justify-content:center; }
+  #pomo-manage-panel > .modal-actions .btn-cancel { flex:0 1 220px; }
 
   @media (max-width: 600px) {
     #pomo-hero { padding:20px 16px 118px; }
@@ -560,11 +564,22 @@
   html.layout-desktop #pomo-modal-overlay { padding:20px; align-items:center; justify-content:center; background:rgba(0,0,0,0.72); }
   html.layout-desktop #pomo-modal-box {
     max-width:min(1300px, 96vw); width:min(1300px, 96vw); min-height:0;
-    height:min(94vh, 960px); max-height:min(94vh, 960px);
-    height:min(94dvh, 960px); max-height:min(94dvh, 960px);
+    height:min(900px, calc(100vh - 40px)); max-height:min(900px, calc(100vh - 40px));
+    height:min(900px, calc(100dvh - 40px)); max-height:min(900px, calc(100dvh - 40px));
     border-radius:var(--radius-xl); border:1px solid var(--border-hover);
     box-shadow:0 24px 70px rgba(0,0,0,0.55); overflow-y:auto; padding-bottom:0;
+    /* 🔧 TUZATISH: quti balandligi qat'iy (94vh), lekin kontent qisqa
+       bo'lsa (masalan 0 ta amaliylik) pastki navigatsiya oddiy oqimda
+       ro'yxat ortidan — qutining O'RTASIDA qolib ketardi, ostida esa
+       katta bo'sh qorong'i joy qolardi (position:sticky faqat kontent
+       qutidan uzun bo'lganda pastga yopishadi). Endi quti flex-ustun:
+       hero (o'z balandligi) → amaliyliklar paneli (flex:1, bo'sh joyni
+       to'ldiradi) → navigatsiya (doim eng pastda). Kontent uzun bo'lsa
+       butun quti scroll qiladi va nav sticky bo'lib pastda turadi. */
+    display:flex; flex-direction:column;
   }
+  html.layout-desktop #pomo-hero { flex-shrink:0; }
+  html.layout-desktop #pomo-bottomnav { flex-shrink:0; }
   /* Pastki navigatsiya endi butun brauzer oynasiga emas, shu "quti"ning
      o'ziga yopishadi (sticky) — chunki #pomo-modal-box endi haqiqiy
      viewport emas, o'zining ichki scrolliga ega chegaralangan konteyner. */
@@ -572,7 +587,7 @@
   /* Immersive (to'liq ekran taymer) rejimi — cheksiz 100vh o'rniga
      "quti" ichida mos keladigan qat'iy balandlik ishlatiladi, aks holda
      karta o'zining max-height'idan tashqariga chiqib ketardi. */
-  html.layout-desktop #pomo-modal-box.pomo-immersive #pomo-hero { min-height:min(94vh, 960px); min-height:min(94dvh, 960px); }
+  html.layout-desktop #pomo-modal-box.pomo-immersive #pomo-hero { min-height:0; flex:1 0 auto; }
   /* Juda kichik noutbuk oynalari (masalan 1024px kenglik) uchun ham
      quti hech qachon ekrandan tashqariga chiqmaydi va yon bo'shliq
      qolmaydi — vw/vh asosidagi o'lcham buni avtomatik ta'minlaydi,
@@ -587,7 +602,7 @@
      Fon va sarlavha (#pomo-hero) esa katta quti kengligiga to'liq
      cho'ziladi — natijada zamonaviy "katta ekran, markazlashgan kontent"
      ko'rinishi hosil bo'ladi. */
-  html.layout-desktop #pomo-manage-panel { max-width:760px; margin:0 auto; }
+  html.layout-desktop #pomo-manage-panel { max-width:760px; margin:0 auto; width:100%; box-sizing:border-box; flex:1 0 auto; }
 
   /* 📱 PLANSHET (layout-mobile, lekin 600px dan kengroq ekran): to'liq
      ekranda qoladi (notebook'dagi kabi "quti"ga aylanmaydi), lekin

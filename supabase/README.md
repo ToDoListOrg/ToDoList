@@ -21,6 +21,7 @@ Barcha o'zgarishlar Supabase migratsiyalari sifatida qo'llangan
 | `push_subscriptions`, `push_config_rpc_and_cron`, `push_service_role_grants`, `schedule_send_reminders` | 🔔 push eslatmalar (kalitlar Vault'da, pg_cron har 5 daqiqada `send-reminders` funksiyasini chaqiradi) |
 | `referrals` | 🎁 do'st taklif qilish (3 faol kundan keyin ikkalasiga +10 💎) |
 | `friends_last_active` | do'stlarda haqiqiy onlayn holat |
+| `fair_competitions_core`, `party_competition_rpcs`, `party_comp_close_split`, `party_comp_outcome_column`, `duels_worldparty_fair_metrics`, `world_party_data_volatile` | ⚖️ Duel / Party / World Party: faqat "bajarish %" va "XP" o'lchovlari; Party — a'zolar o'rtasidagi musobaqa |
 | `profiles_anti_cheat_rate_limits` | reyting firibgarligiga qarshi: XP/tanga/gem/streak o'sishi serverda cheklanadi |
 
 Edge function: `functions/send-reminders` (verify_jwt o'chiq — o'rniga Vault'dagi `push_cron_secret` sarlavhasi tekshiriladi).
